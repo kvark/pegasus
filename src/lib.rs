@@ -1,5 +1,5 @@
 extern crate env_logger;
-#[macro_use] extern crate gfx;
+extern crate gfx;
 extern crate glutin;
 extern crate specs;
 
@@ -7,8 +7,7 @@ use std::{thread, time};
 use std::sync::mpsc;
 
 pub type Delta = f32;
-pub type ColorFormat = gfx::format::Srgba8;
-pub type DepthFormat = gfx::format::DepthStencil;
+pub type Planner = specs::Planner<Delta>;
 
 pub const DRAW_PRIORITY: specs::Priority = 10;
 pub const DRAW_NAME: &'static str = "draw";
@@ -16,13 +15,13 @@ pub const DRAW_NAME: &'static str = "draw";
 
 pub trait Shell: 'static + Send {
     fn init_components(&self, &mut specs::World);
-    fn init_systems(&mut self, &mut specs::Planner<Delta>);
+    fn init_systems(&mut self, &mut Planner);
     fn proceed(&mut self, &specs::World) -> bool;
 }
 
 struct App<S> {
     shell: S,
-    planner: specs::Planner<Delta>,
+    planner: Planner,
     last_time: time::Instant,
 }
 
@@ -55,20 +54,16 @@ pub trait EventHandler {
 // dummy implementation for your convenience
 impl EventHandler for () {}
 
-pub struct DrawTargets<R: gfx::Resources> {
-    pub color: gfx::handle::RenderTargetView<R, ColorFormat>,
-    pub depth: gfx::handle::DepthStencilView<R, DepthFormat>,
-}
-
 pub trait Painter<R: gfx::Resources>: 'static + Send {
     type Visual: specs::Component;
-    fn draw<C: gfx::CommandBuffer<R>>(&mut self, &Self::Visual, &mut gfx::Encoder<R, C>);
+    fn draw<'a, I, C>(&mut self, I, &mut gfx::Encoder<R, C>) where
+            I: Iterator<Item = &'a Self::Visual>,
+            C: gfx::CommandBuffer<R>;
 }
 
 struct DrawSystem<R: gfx::Resources, C: gfx::CommandBuffer<R>, P> {
     painter: P,
     channel: EncoderChannel<R, C>,
-    targets: DrawTargets<R>,
 }
 
 impl<R: 'static + gfx::Resources, C: 'static + Send + gfx::CommandBuffer<R>, P: Painter<R>>
@@ -82,21 +77,15 @@ specs::System<Delta> for DrawSystem<R, C, P> {
         };
         // fetch visuals
         let vis = arg.fetch(|w| w.read::<P::Visual>());
-        // clear screen
-        encoder.clear(&self.targets.color, [0.0, 0.0, 0.0, 1.0]);
-        encoder.clear_depth(&self.targets.depth, 1.0);
-        encoder.clear_stencil(&self.targets.depth, 0);
         // render entities
-        for v in (&vis).iter() {
-            self.painter.draw(v, &mut encoder);
-        }
+        self.painter.draw((&vis).iter(), &mut encoder);
         // done
         let _ = self.channel.sender.send(encoder);
     }
 }
 
 pub fn fly<D: gfx::Device, F: FnMut() -> D::CommandBuffer, S: Shell, P: Painter<D::Resources>, E: EventHandler>(
-           window: glutin::Window, mut device: D, mut com_factory: F, targets: DrawTargets<D::Resources>,
+           window: glutin::Window, mut device: D, mut com_factory: F,
            mut shell: S, painter: P, mut event_handler: E)
 where D::CommandBuffer: 'static + Send {
     env_logger::init().unwrap();
@@ -118,7 +107,6 @@ where D::CommandBuffer: 'static + Send {
         let draw_sys = DrawSystem {
             painter: painter,
             channel: enc_chan,
-            targets: targets,
         };
         let mut w = specs::World::new();
         w.register::<P::Visual>();

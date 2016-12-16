@@ -6,7 +6,7 @@ authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
 [dependencies]
 env_logger = "0.3"
 gfx = "0.12"
-glutin = "0.7"
+glutin = "0.6"
 specs = "0.7"
 
 [dev_dependencies]
