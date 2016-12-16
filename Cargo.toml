@@ -1,7 +1,13 @@
 [package]
 name = "pegasus"
 version = "0.1.0"
+description = "GFX + Specs framework"
+repository = "https://github.com/kvark/pegasus"
+keywords = ["gamedev"]
+license = "Apache-2.0"
 authors = ["Dzmitry Malyshau <kvarkus@gmail.com>"]
+
+[lib]
 
 [dependencies]
 env_logger = "0.3"
