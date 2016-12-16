@@ -1,6 +1,5 @@
 extern crate env_logger;
 #[macro_use] extern crate gfx;
-extern crate gfx_window_glutin;
 extern crate glutin;
 extern crate specs;
 
@@ -16,7 +15,8 @@ pub const DRAW_NAME: &'static str = "draw";
 
 
 pub trait Shell: 'static + Send {
-    fn init(&mut self, &mut specs::Planner<Delta>);
+    fn init_components(&self, &mut specs::World);
+    fn init_systems(&mut self, &mut specs::Planner<Delta>);
     fn proceed(&mut self, &specs::World) -> bool;
 }
 
@@ -40,6 +40,20 @@ struct EncoderChannel<R: gfx::Resources, C: gfx::CommandBuffer<R>> {
     receiver: mpsc::Receiver<gfx::Encoder<R, C>>,
     sender: mpsc::Sender<gfx::Encoder<R, C>>,
 }
+
+pub trait EventHandler {
+    fn handle(&mut self, event: glutin::Event) -> bool {
+        // quit when Esc is pressed
+        match event {
+            glutin::Event::KeyboardInput(_, _, Some(glutin::VirtualKeyCode::Escape)) |
+            glutin::Event::Closed => false,
+            _ => true,
+        }
+    }
+}
+
+// dummy implementation for your convenience
+impl EventHandler for () {}
 
 pub struct DrawTargets<R: gfx::Resources> {
     pub color: gfx::handle::RenderTargetView<R, ColorFormat>,
@@ -81,9 +95,9 @@ specs::System<Delta> for DrawSystem<R, C, P> {
     }
 }
 
-pub fn fly<D: gfx::Device, F: FnMut() -> D::CommandBuffer, S: Shell, P: Painter<D::Resources>>(
+pub fn fly<D: gfx::Device, F: FnMut() -> D::CommandBuffer, S: Shell, P: Painter<D::Resources>, E: EventHandler>(
            window: glutin::Window, mut device: D, mut com_factory: F, targets: DrawTargets<D::Resources>,
-           mut shell: S, painter: P)
+           mut shell: S, painter: P, mut event_handler: E)
 where D::CommandBuffer: 'static + Send {
     env_logger::init().unwrap();
 
@@ -106,31 +120,28 @@ where D::CommandBuffer: 'static + Send {
             channel: enc_chan,
             targets: targets,
         };
-        let w = specs::World::new();
+        let mut w = specs::World::new();
+        w.register::<P::Visual>();
+        shell.init_components(&mut w);
         let mut plan = specs::Planner::new(w, 4);
         plan.add_system(draw_sys, DRAW_NAME, DRAW_PRIORITY);
-        shell.init(&mut plan);
+        shell.init_systems(&mut plan);
         App {
             shell: shell,
             planner: plan,
             last_time: time::Instant::now(),
         }
     };
+
     thread::spawn(move || {
         while app.tick() {}
     });
 
-    'main: loop {
-        let mut encoder = match dev_recv.recv() {
-            Ok(r) => r,
-            Err(_) => break 'main,
-        };
-        // quit when Esc is pressed.
+    while let Ok(mut encoder) = dev_recv.recv() {
+        // handle events
         for event in window.poll_events() {
-            match event {
-                glutin::Event::KeyboardInput(_, _, Some(glutin::VirtualKeyCode::Escape)) => break 'main,
-                glutin::Event::Closed => break 'main,
-                _ => (),//TODO: ev_send.process_glutin(event),
+            if !event_handler.handle(event) {
+                break
             }
         }
         // draw a frame
