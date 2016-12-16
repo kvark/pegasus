@@ -4,6 +4,8 @@ extern crate glutin;
 extern crate pegasus;
 extern crate specs;
 
+// First, define the rendering pipeline
+
 pub type ColorFormat = gfx::format::Srgba8;
 pub type DepthFormat = gfx::format::DepthStencil;
 
@@ -29,6 +31,15 @@ const CODE_FS: &'static [u8] = b"
     }
 ";
 
+// Second, define a drawable component for our ECS
+// also add a simple system to animate entities
+
+struct Drawable([f32; 2]);
+
+impl specs::Component for Drawable {
+    type Storage = specs::VecStorage<Drawable>;
+}
+
 struct MoveSystem;
 
 impl specs::System<pegasus::Delta> for MoveSystem {
@@ -43,6 +54,8 @@ impl specs::System<pegasus::Delta> for MoveSystem {
         }
     }
 }
+
+// Third, define the program shell that initializes the ECS
 
 struct Shell;
 
@@ -63,11 +76,7 @@ impl pegasus::Shell for Shell {
     fn proceed(&mut self, _: &specs::World) -> bool { true }
 }
 
-struct Drawable([f32; 2]);
-
-impl specs::Component for Drawable {
-    type Storage = specs::VecStorage<Drawable>;
-}
+// Fourth, define the painter class to draw our entities
 
 struct Painter<R: gfx::Resources> {
     slice: gfx::Slice<R>,
@@ -88,6 +97,9 @@ impl<R: gfx::Resources> pegasus::Painter<R> for Painter<R> {
         }
     }
 }
+
+// Fifth, create the graphics context and instances of our new classes
+// after that, we are free to fly
 
 fn main() {
     use gfx::traits::FactoryExt;
