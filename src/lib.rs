@@ -13,25 +13,25 @@ pub const DRAW_PRIORITY: specs::Priority = 10;
 pub const DRAW_NAME: &'static str = "draw";
 
 
-pub trait Shell: 'static + Send {
-    fn init_components(&self, &mut specs::World);
-    fn init_systems(&mut self, &mut Planner);
-    fn proceed(&mut self, &specs::World) -> bool;
+pub trait Init: 'static {
+    type Shell: 'static + Send;
+    fn start(self, &mut Planner) -> Self::Shell;
+    fn proceed(_: &mut Self::Shell, _: &specs::World) -> bool { true }
 }
 
-struct App<S> {
-    shell: S,
+struct App<I: Init> {
+    shell: I::Shell,
     planner: Planner,
     last_time: time::Instant,
 }
 
-impl<S: Shell> App<S> {
+impl<I: Init> App<I> {
     fn tick(&mut self) -> bool {
         let elapsed = self.last_time.elapsed();
         self.last_time = time::Instant::now();
         let delta = elapsed.subsec_nanos() as f32 / 1e9 + elapsed.as_secs() as f32;
         self.planner.dispatch(delta);
-        self.shell.proceed(self.planner.mut_world())
+        I::proceed(&mut self.shell, self.planner.mut_world())
     }
 }
 
@@ -84,9 +84,9 @@ specs::System<Delta> for DrawSystem<R, C, P> {
     }
 }
 
-pub fn fly<D: gfx::Device, F: FnMut() -> D::CommandBuffer, S: Shell, P: Painter<D::Resources>, E: EventHandler>(
+pub fn fly<D: gfx::Device, F: FnMut() -> D::CommandBuffer, I: Init, P: Painter<D::Resources>, E: EventHandler>(
            window: glutin::Window, mut device: D, mut com_factory: F,
-           mut shell: S, painter: P, mut event_handler: E)
+           init: I, painter: P, mut event_handler: E)
 where D::CommandBuffer: 'static + Send {
     env_logger::init().unwrap();
 
@@ -110,26 +110,26 @@ where D::CommandBuffer: 'static + Send {
         };
         let mut w = specs::World::new();
         w.register::<P::Visual>();
-        shell.init_components(&mut w);
         let mut plan = specs::Planner::new(w, 4);
         plan.add_system(draw_sys, DRAW_NAME, DRAW_PRIORITY);
-        shell.init_systems(&mut plan);
-        App {
+        let shell = init.start(&mut plan);
+        App::<I> {
             shell: shell,
             planner: plan,
             last_time: time::Instant::now(),
         }
     };
 
+    //TODO: safely join thread on exit?
     thread::spawn(move || {
         while app.tick() {}
     });
 
-    while let Ok(mut encoder) = dev_recv.recv() {
+    'main: while let Ok(mut encoder) = dev_recv.recv() {
         // handle events
         for event in window.poll_events() {
             if !event_handler.handle(event) {
-                break
+                break 'main
             }
         }
         // draw a frame

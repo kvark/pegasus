@@ -55,12 +55,15 @@ impl specs::System<pegasus::Delta> for MoveSystem {
     }
 }
 
-// Third, define the program shell that initializes the ECS
+// Third, define the program init logic for the ECS
 
-struct Shell;
+struct Init;
 
-impl pegasus::Shell for Shell {
-    fn init_components(&self, w: &mut specs::World) {
+impl pegasus::Init for Init {
+    type Shell = ();
+    fn start(self, plan: &mut pegasus::Planner) -> () {
+        plan.add_system(MoveSystem, "move", 20);
+        let mut w = plan.mut_world();
         use std::f32::consts::PI;
         let num = 200;
         for i in 0 .. num {
@@ -70,10 +73,6 @@ impl pegasus::Shell for Shell {
             w.create_now().with(Drawable(pos));
         }
     }
-    fn init_systems(&mut self, plan: &mut pegasus::Planner) {
-        plan.add_system(MoveSystem, "move", 20);
-    }
-    fn proceed(&mut self, _: &specs::World) -> bool { true }
 }
 
 // Fourth, define the painter class to draw our entities
@@ -111,7 +110,7 @@ fn main() {
     let (window, device, mut factory, main_color, _main_depth) =
         gfx_window_glutin::init::<ColorFormat, DepthFormat>(builder);
 
-    let shell = Shell;
+    let init = Init;
     let painter = Painter {
         slice: gfx::Slice {
             start: 0,
@@ -134,5 +133,5 @@ fn main() {
 
     pegasus::fly(window, device,
                  || factory.create_command_buffer(),
-                 shell, painter, ());
+                 init, painter, ());
 }
