@@ -131,7 +131,17 @@ fn main() {
         },
     };
 
-    pegasus::fly(window, device,
-                 || factory.create_command_buffer(),
-                 init, painter, ());
+    let mut pegasus = pegasus::Pegasus::new(init, device, painter, ||
+        factory.create_command_buffer());
+    
+    'main: while let Some(_swing) = pegasus.swing() {
+        window.swap_buffers().unwrap();
+        for event in window.poll_events() {
+            match event {
+                glutin::Event::KeyboardInput(_, _, Some(glutin::VirtualKeyCode::Escape)) |
+                glutin::Event::Closed => break 'main,
+                _ => (),
+            }
+        }
+    }
 }

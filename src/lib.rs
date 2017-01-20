@@ -1,6 +1,4 @@
-extern crate env_logger;
 extern crate gfx;
-extern crate glutin;
 extern crate specs;
 
 use std::{thread, time};
@@ -35,24 +33,10 @@ impl<I: Init> App<I> {
     }
 }
 
-struct EncoderChannel<R: gfx::Resources, C: gfx::CommandBuffer<R>> {
+struct ChannelPair<R: gfx::Resources, C: gfx::CommandBuffer<R>> {
     receiver: mpsc::Receiver<gfx::Encoder<R, C>>,
     sender: mpsc::Sender<gfx::Encoder<R, C>>,
 }
-
-pub trait EventHandler {
-    fn handle(&mut self, event: glutin::Event) -> bool {
-        // quit when Esc is pressed
-        match event {
-            glutin::Event::KeyboardInput(_, _, Some(glutin::VirtualKeyCode::Escape)) |
-            glutin::Event::Closed => false,
-            _ => true,
-        }
-    }
-}
-
-// dummy implementation for your convenience
-impl EventHandler for () {}
 
 pub trait Painter<R: gfx::Resources>: 'static + Send {
     type Visual: specs::Component;
@@ -63,11 +47,15 @@ pub trait Painter<R: gfx::Resources>: 'static + Send {
 
 struct DrawSystem<R: gfx::Resources, C: gfx::CommandBuffer<R>, P> {
     painter: P,
-    channel: EncoderChannel<R, C>,
+    channel: ChannelPair<R, C>,
 }
 
-impl<R: 'static + gfx::Resources, C: 'static + Send + gfx::CommandBuffer<R>, P: Painter<R>>
-specs::System<Delta> for DrawSystem<R, C, P> {
+impl<R, C, P> specs::System<Delta> for DrawSystem<R, C, P>
+where
+    R: 'static + gfx::Resources,
+    C: 'static + Send + gfx::CommandBuffer<R>,
+    P: Painter<R>,
+{
     fn run(&mut self, arg: specs::RunArg, _: Delta) {
         use specs::Join;
         // get a new command buffer
@@ -84,58 +72,84 @@ specs::System<Delta> for DrawSystem<R, C, P> {
     }
 }
 
-pub fn fly<D: gfx::Device, F: FnMut() -> D::CommandBuffer, I: Init, P: Painter<D::Resources>, E: EventHandler>(
-           window: glutin::Window, mut device: D, mut com_factory: F,
-           init: I, painter: P, mut event_handler: E)
-where D::CommandBuffer: 'static + Send {
-    env_logger::init().unwrap();
+pub struct Pegasus<D: gfx::Device> {
+    pub device: D,
+    channel: ChannelPair<D::Resources, D::CommandBuffer>,
+    _guard: thread::JoinHandle<()>,
+}
 
-    let (app_send, dev_recv) = mpsc::channel();
-    let (dev_send, app_recv) = mpsc::channel();
+pub struct Swing<'a, D: 'a + gfx::Device> {
+    device: &'a mut D,
+}
 
-    // double-buffering renderers
-    for _ in 0..2 {
-        let enc = gfx::Encoder::from(com_factory());
-        app_send.send(enc).unwrap();
+impl<'a, D: 'a + gfx::Device> Drop for Swing<'a, D> {
+    fn drop(&mut self) {
+        self.device.cleanup();
+    }
+}
+
+impl<D: gfx::Device> Pegasus<D> {
+    pub fn new<F, I, P>(init: I, device: D, painter: P, mut com_factory: F)
+               -> Pegasus<D> where
+        I: Init,
+        D::CommandBuffer: 'static + Send, //TODO: remove when gfx forces these bounds
+        P: Painter<D::Resources>,
+        F: FnMut() -> D::CommandBuffer,
+    {
+        let (app_send, dev_recv) = mpsc::channel();
+        let (dev_send, app_recv) = mpsc::channel();
+
+        // double-buffering renderers
+        for _ in 0..2 {
+            let enc = gfx::Encoder::from(com_factory());
+            app_send.send(enc).unwrap();
+        }
+
+        let mut app = {
+            let draw_sys = DrawSystem {
+                painter: painter,
+                channel: ChannelPair {
+                    receiver: app_recv,
+                    sender: app_send,
+                },
+            };
+            let mut w = specs::World::new();
+            w.register::<P::Visual>();
+            let mut plan = specs::Planner::new(w, 4);
+            plan.add_system(draw_sys, DRAW_NAME, DRAW_PRIORITY);
+            let shell = init.start(&mut plan);
+            App::<I> {
+                shell: shell,
+                planner: plan,
+                last_time: time::Instant::now(),
+            }
+        };
+
+        Pegasus {
+            device: device,
+            channel: ChannelPair {
+                sender: dev_send,
+                receiver: dev_recv,
+            },
+            _guard: thread::spawn(move || {
+                while app.tick() {}
+            }),
+        }
     }
 
-    let enc_chan = EncoderChannel {
-        receiver: app_recv,
-        sender: app_send,
-    };
-    let mut app = {
-        let draw_sys = DrawSystem {
-            painter: painter,
-            channel: enc_chan,
-        };
-        let mut w = specs::World::new();
-        w.register::<P::Visual>();
-        let mut plan = specs::Planner::new(w, 4);
-        plan.add_system(draw_sys, DRAW_NAME, DRAW_PRIORITY);
-        let shell = init.start(&mut plan);
-        App::<I> {
-            shell: shell,
-            planner: plan,
-            last_time: time::Instant::now(),
+    pub fn swing(&mut self) -> Option<Swing<D>> {
+        match self.channel.receiver.recv() {
+            Ok(mut encoder) => {
+                // draw a frame
+                encoder.flush(&mut self.device);
+                if self.channel.sender.send(encoder).is_err() {
+                    return None
+                }
+                Some(Swing {
+                    device: &mut self.device,
+                })
+            },
+            Err(_) => None,
         }
-    };
-
-    //TODO: safely join thread on exit?
-    thread::spawn(move || {
-        while app.tick() {}
-    });
-
-    'main: while let Ok(mut encoder) = dev_recv.recv() {
-        // handle events
-        for event in window.poll_events() {
-            if !event_handler.handle(event) {
-                break 'main
-            }
-        }
-        // draw a frame
-        encoder.flush(&mut device);
-        dev_send.send(encoder).unwrap();
-        window.swap_buffers().unwrap();
-        device.cleanup();
     }
 }
