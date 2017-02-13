@@ -39,9 +39,7 @@ struct ChannelPair<R: gfx::Resources, C: gfx::CommandBuffer<R>> {
 }
 
 pub trait Painter<R: gfx::Resources>: 'static + Send {
-    type Visual: specs::Component;
-    fn draw<'a, I, C>(&mut self, I, &mut gfx::Encoder<R, C>) where
-            I: Iterator<Item = &'a Self::Visual>,
+    fn draw<'a, C>(&mut self, arg: specs::RunArg, &mut gfx::Encoder<R, C>) where
             C: gfx::CommandBuffer<R>;
 }
 
@@ -57,16 +55,13 @@ where
     P: Painter<R>,
 {
     fn run(&mut self, arg: specs::RunArg, _: Delta) {
-        use specs::Join;
         // get a new command buffer
         let mut encoder = match self.channel.receiver.recv() {
             Ok(r) => r,
             Err(_) => return,
         };
-        // fetch visuals
-        let vis = arg.fetch(|w| w.read::<P::Visual>());
         // render entities
-        self.painter.draw((&vis).iter(), &mut encoder);
+        self.painter.draw(arg, &mut encoder);
         // done
         let _ = self.channel.sender.send(encoder);
     }
@@ -113,8 +108,7 @@ impl<D: gfx::Device> Pegasus<D> {
                     sender: app_send,
                 },
             };
-            let mut w = specs::World::new();
-            w.register::<P::Visual>();
+            let w = specs::World::new();
             let mut plan = specs::Planner::new(w, 4);
             plan.add_system(draw_sys, DRAW_NAME, DRAW_PRIORITY);
             let shell = init.start(&mut plan);

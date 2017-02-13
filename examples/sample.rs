@@ -64,6 +64,7 @@ impl pegasus::Init for Init {
     fn start(self, plan: &mut pegasus::Planner) -> () {
         plan.add_system(MoveSystem, "move", 20);
         let mut w = plan.mut_world();
+        w.register::<Drawable>();
         use std::f32::consts::PI;
         let num = 200;
         for i in 0 .. num {
@@ -84,13 +85,13 @@ struct Painter<R: gfx::Resources> {
 }
 
 impl<R: gfx::Resources> pegasus::Painter<R> for Painter<R> {
-    type Visual = Drawable;
-    fn draw<'a, I, C>(&mut self, iter: I, enc: &mut gfx::Encoder<R, C>) where
-        I: Iterator<Item = &'a Self::Visual>,
+    fn draw<'a, C>(&mut self, arg: specs::RunArg, enc: &mut gfx::Encoder<R, C>) where
         C: gfx::CommandBuffer<R>
     {
+        use specs::Join;
+        let visuals = arg.fetch(|w| w.read::<Drawable>());
         enc.clear(&self.data.out, [0.1, 0.2, 0.3, 1.0]);
-        for &Drawable(pos) in iter {
+        for &Drawable(pos) in visuals.iter() {
             self.data.pos = pos.into();
             enc.draw(&self.slice, &self.pso, &self.data);
         }
