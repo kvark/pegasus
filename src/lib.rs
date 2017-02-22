@@ -14,7 +14,7 @@ pub const DRAW_NAME: &'static str = "draw";
 pub trait Init: 'static {
     type Shell: 'static + Send;
     fn start(self, &mut Planner) -> Self::Shell;
-    fn proceed(_: &mut Self::Shell, _: &specs::World) -> bool { true }
+    fn proceed(_: &mut Self::Shell, _: &mut Planner, _: Delta) -> bool { true }
 }
 
 struct App<I: Init> {
@@ -28,8 +28,7 @@ impl<I: Init> App<I> {
         let elapsed = self.last_time.elapsed();
         self.last_time = time::Instant::now();
         let delta = elapsed.subsec_nanos() as f32 / 1e9 + elapsed.as_secs() as f32;
-        self.planner.dispatch(delta);
-        I::proceed(&mut self.shell, self.planner.mut_world())
+        I::proceed(&mut self.shell, &mut self.planner, delta)
     }
 }
 
